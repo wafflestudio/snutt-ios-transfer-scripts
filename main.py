@@ -1,9 +1,18 @@
+import os
+
+import pymongo
 import requests
+
+CLIENT_ID = os.getenv("CLIENT_ID")
+RECIPIENT_TEAM_ID = os.getenv("RECIPIENT_TEAM_ID")
+MONGO_URL = os.getenv("MONGO_URL")
+
+client = pymongo.MongoClient(f"mongodb://{MONGO_URL}:27017/")
 
 
 def load_jwt_token():
     """`client_secret`를 불러온다."""
-    with open("jwt.txt", "r") as f:
+    with open("client_secret_jwt.txt", "r") as f:
         return f.read()
 
 
@@ -31,13 +40,13 @@ def generate_access_token(client_secret: str) -> str:
     return res.json().get("access_token")
 
 
-def get_transfer_id(access_token: str, client_secret: str, user_id: str) -> str:
+def get_transfer_id(access_token: str, client_secret: str, apple_sub: str) -> str:
     """각 유저의 `user_id`에 대응하는 `transfer_id`를 가져온다.
 
     Args:
         access_token (str): REST API 호출을 위한 토큰
         client_secret (str): REST API 호출을 위한 클라이언트 토큰
-        user_id (str): 유저가 애플로 로그인했을 때 발급되는 team-scoped user identifier
+        apple_sub (str): 유저가 애플로 로그인했을 때 발급되는 team-scoped user identifier
 
     Returns:
         str: transfer id. 팀 간 유저 identifier를 연결하는 다리 역할을 한다.
@@ -49,7 +58,7 @@ def get_transfer_id(access_token: str, client_secret: str, user_id: str) -> str:
             "Authorization": f"Bearer {access_token}",
         },
         data=dict(
-            sub=user_id,
+            sub=apple_sub,
             target=RECIPIENT_TEAM_ID,
             client_id=CLIENT_ID,
             client_secret=client_secret,
@@ -88,29 +97,34 @@ def get_new_user_id(access_token: str, client_secret: str, transfer_id: str) -> 
     return res.json()
 
 
-def get_all_user_ids() -> list[str]:
-    # TODO: DB에 존재하는 모든 user_id(`appleSub`) 필드를 가져온다.
-    return ["001896.c91fbf54687a4a61b731add1b715e446.1655"]
-
-
-def save_transfer_id(user_id: str, transfer_id: str):
-    # TODO: transfer_id를 `appleTransferSub`라는 새로운 필드에 저장한다.
-    return
-
-
 def main():
     client_secret = load_jwt_token()
     access_token = generate_access_token(client_secret=client_secret)
-    for user_id in get_all_user_ids():
+
+    users = client.snutt.users
+    count = 0
+    for i, user in enumerate(users.find({"credential.appleSub": {"$ne": None}}).sort("regDate", pymongo.ASCENDING)):
+        apple_sub = user["credential"]["appleSub"]
+        user_id = user["_id"]
+        reg_date = user["regDate"]
+
+        if i % 100 == 0:
+            count += 1
+            print(f"Processed {i} users: {user_id} | {reg_date} | {apple_sub}")
+
         transfer_id = get_transfer_id(
             access_token=access_token,
             client_secret=client_secret,
-            user_id=user_id,
+            apple_sub=apple_sub,
         )
-        save_transfer_id(user_id=user_id, transfer_id=transfer_id)
+
+        users.update_one(
+            {"_id": user_id},
+            {"$set": {"credential.appleTransferSub": transfer_id}},
+        )
+
+    print(f"Processed {count} users!")
 
 
 if __name__ == "__main__":
-    CLIENT_ID = "com.wafflestudio.snutt"
-    RECIPIENT_TEAM_ID = "K9883YB4VR"
     main()
