@@ -109,7 +109,6 @@ def main():
         reg_date = user["regDate"]
 
         if i % 100 == 0:
-            count += 1
             print(f"Processed {i} users: {user_id} | {reg_date} | {apple_sub}")
 
         transfer_sub = get_transfer_sub(
@@ -122,6 +121,7 @@ def main():
             {"_id": user_id},
             {"$set": {"credential.appleTransferSub": transfer_sub}},
         )
+        count += 1
 
     print(f"Processed {count} users!")
 
