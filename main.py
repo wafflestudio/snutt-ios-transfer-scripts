@@ -40,8 +40,8 @@ def generate_access_token(client_secret: str) -> str:
     return res.json().get("access_token")
 
 
-def get_transfer_id(access_token: str, client_secret: str, apple_sub: str) -> str:
-    """각 유저의 `user_id`에 대응하는 `transfer_id`를 가져온다.
+def get_transfer_sub(access_token: str, client_secret: str, apple_sub: str) -> str:
+    """각 유저의 `user_id`에 대응하는 `transfer_sub`를 가져온다.
 
     Args:
         access_token (str): REST API 호출을 위한 토큰
@@ -49,7 +49,7 @@ def get_transfer_id(access_token: str, client_secret: str, apple_sub: str) -> st
         apple_sub (str): 유저가 애플로 로그인했을 때 발급되는 team-scoped user identifier
 
     Returns:
-        str: transfer id. 팀 간 유저 identifier를 연결하는 다리 역할을 한다.
+        str: transfer sub. 팀 간 유저 identifier를 연결하는 다리 역할을 한다.
     """
     res = requests.post(
         url="https://appleid.apple.com/auth/usermigrationinfo",
@@ -67,14 +67,14 @@ def get_transfer_id(access_token: str, client_secret: str, apple_sub: str) -> st
     return res.json().get("transfer_sub")
 
 
-def get_new_user_id(access_token: str, client_secret: str, transfer_id: str) -> dict:
-    """`tranfser_id`를 바탕으로 새로운 user_id를 발급받습니다.
+def get_new_user_id(access_token: str, client_secret: str, transfer_sub: str) -> dict:
+    """`tranfser_sub`를 바탕으로 새로운 user_id를 발급받습니다.
     [주의] 이 API는 App Transfer가 완료된 이후부터 사용할 수 있습니다.
 
     Args:
         access_token (str): REST API 호출을 위한 토큰
         client_secret (str): REST API 호출을 위한 클라이언트 토큰
-        transfer_id (str): `get_transfer_id` 등을 통해 발급받은 transfer_id
+        transfer_sub (str): `get_transfer_sub` 등을 통해 발급받은 transfer_sub
 
     Returns:
         dict: 아래 3가지 필드가 포함된 json object
@@ -89,7 +89,7 @@ def get_new_user_id(access_token: str, client_secret: str, transfer_id: str) -> 
             "Authorization": f"Bearer {access_token}",
         },
         data=dict(
-            transfer_sub=transfer_id,
+            transfer_sub=transfer_sub,
             client_id=CLIENT_ID,
             client_secret=client_secret,
         ),
@@ -112,7 +112,7 @@ def main():
             count += 1
             print(f"Processed {i} users: {user_id} | {reg_date} | {apple_sub}")
 
-        transfer_id = get_transfer_id(
+        transfer_sub = get_transfer_sub(
             access_token=access_token,
             client_secret=client_secret,
             apple_sub=apple_sub,
@@ -120,7 +120,7 @@ def main():
 
         users.update_one(
             {"_id": user_id},
-            {"$set": {"credential.appleTransferSub": transfer_id}},
+            {"$set": {"credential.appleTransferSub": transfer_sub}},
         )
 
     print(f"Processed {count} users!")
