@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 import pymongo
 import requests
@@ -40,7 +41,7 @@ def generate_access_token(client_secret: str) -> str:
     return res.json().get("access_token")
 
 
-def get_transfer_sub(access_token: str, client_secret: str, apple_sub: str) -> str:
+def get_transfer_sub(access_token: str, client_secret: str, apple_sub: str) -> Optional[str]:
     """각 유저의 `user_id`에 대응하는 `transfer_sub`를 가져온다.
 
     Args:
@@ -64,7 +65,15 @@ def get_transfer_sub(access_token: str, client_secret: str, apple_sub: str) -> s
             client_secret=client_secret,
         ),
     )
-    return res.json().get("transfer_sub")
+    try:
+        res.raise_for_status()
+        return res.json().get("transfer_sub")
+    except requests.exceptions.HTTPError:
+        print(res.status_code, res.json())
+        return None
+    except Exception as e:
+        print(e)
+        return None
 
 
 def get_new_user_id(access_token: str, client_secret: str, transfer_sub: str) -> dict:
@@ -103,7 +112,9 @@ def main():
 
     users = client.snutt.users
     count = 0
-    for i, user in enumerate(users.find({"credential.appleSub": {"$ne": None}}).sort("regDate", pymongo.ASCENDING)):
+    for i, user in enumerate(users.find({"credential.appleSub": {"$ne": None},
+                                         "credential.appleTransferSub": {"$eq": None}}
+                                        ).sort("regDate", pymongo.ASCENDING)):
         apple_sub = user["credential"]["appleSub"]
         user_id = user["_id"]
         reg_date = user["regDate"]
@@ -116,6 +127,9 @@ def main():
             client_secret=client_secret,
             apple_sub=apple_sub,
         )
+        if not transfer_sub:
+            print(f"Failed to get transfer sub: {user_id} | {reg_date} | {apple_sub}")
+            continue
 
         users.update_one(
             {"_id": user_id},
