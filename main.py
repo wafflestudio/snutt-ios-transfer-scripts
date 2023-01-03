@@ -76,7 +76,7 @@ def get_transfer_sub(access_token: str, client_secret: str, apple_sub: str) -> O
         return None
 
 
-def get_new_user_id(access_token: str, client_secret: str, transfer_sub: str) -> dict:
+def get_new_apple_user(access_token: str, client_secret: str, transfer_sub: str) -> Optional[dict]:
     """`tranfser_sub`를 바탕으로 새로운 user_id를 발급받습니다.
     [주의] 이 API는 App Transfer가 완료된 이후부터 사용할 수 있습니다.
 
@@ -103,10 +103,21 @@ def get_new_user_id(access_token: str, client_secret: str, transfer_sub: str) ->
             client_secret=client_secret,
         ),
     )
-    return res.json()
+    try:
+        res.raise_for_status()
+        return res.json()
+    except requests.exceptions.HTTPError:
+        print(res.status_code, res)
+        if res.status_code == 502:
+            print(f"502 retry... transfer sub: {transfer_sub}")
+            return get_new_apple_user(access_token, client_secret, transfer_sub)
+        return None
+    except Exception as e:
+        print(e)
+        return None
 
 
-def main():
+def main_for_creating_apple_transfer_sub_of_all_users():
     client_secret = load_jwt_token()
     access_token = generate_access_token(client_secret=client_secret)
 
@@ -138,6 +149,82 @@ def main():
         count += 1
 
     print(f"Processed {count} users!")
+
+
+def main():
+    client_secret = load_jwt_token()
+    access_token = generate_access_token(client_secret=client_secret)
+
+    users = client.snutt.users
+    count, already_migrated_count = 0, 0
+    no_sub_count, no_email_count, no_email_migrated_count, no_email_not_migrated_count, yes_email_migrated_count, yes_email_not_migrated_count = 0, 0, 0, 0, 0, 0
+    for i, user in enumerate(users.find({"credential.appleSub": {"$ne": None},
+                                         "credential.appleTransferSub": {"$ne": None}}
+                                        ).sort("regDate", pymongo.ASCENDING)):
+        apple_sub = user["credential"]["appleSub"]
+        apple_transfer_sub = user["credential"]["appleTransferSub"]
+        apple_email = user["credential"]["appleEmail"]
+        user_id = user["_id"]
+        reg_date = user["regDate"]
+
+        if i % 100 == 0:
+            print(f"Processed {i} users: {user_id} | {reg_date} | {apple_sub}")
+            print(
+                f"(already migrated: {already_migrated_count}) (no sub count: {no_sub_count})"
+                f" (no new email: {no_email_count}"
+                f" || no email - migrated ? {no_email_migrated_count} : {no_email_not_migrated_count}"
+                f" || yes email - migrated ? {yes_email_migrated_count} : {yes_email_not_migrated_count})"
+            )
+
+        new_apple_user = get_new_apple_user(
+            access_token=access_token,
+            client_secret=client_secret,
+            transfer_sub=apple_transfer_sub,
+        )
+        if not new_apple_user:
+            print(f"Failed to get new apple user: {user_id} | {reg_date} | {apple_sub}")
+            continue
+
+        new_apple_sub = new_apple_user["sub"]
+        new_apple_email = new_apple_user.get("email")
+        if not new_apple_sub:
+            no_sub_count += 1
+            continue
+        if not new_apple_email:
+            no_email_count += 1
+            if not apple_email:
+                if apple_sub == new_apple_sub:
+                    no_email_migrated_count += 1
+                else:
+                    no_email_not_migrated_count += 1
+            else:
+                if apple_sub == new_apple_sub:
+                    yes_email_migrated_count += 1
+                else:
+                    yes_email_not_migrated_count += 1
+
+        if apple_sub == new_apple_sub:
+            already_migrated_count += 1
+            continue
+
+        if new_apple_email:
+            update_dict = {"credential.appleSub": new_apple_sub, "credential.appleEmail": new_apple_email}
+        else:
+            update_dict = {"credential.appleSub": new_apple_sub}
+
+        users.update_one(
+            {"_id": user_id},
+            {"$set": update_dict},
+        )
+        count += 1
+
+    print(f"Processed {count} users!")
+    print(
+        f"(already migrated: {already_migrated_count}) (no sub count: {no_sub_count})"
+        f" (no new email: {no_email_count}"
+        f" || no email - migrated ? {no_email_migrated_count} : {no_email_not_migrated_count}"
+        f" || yes email - migrated ? {yes_email_migrated_count} : {yes_email_not_migrated_count})"
+    )
 
 
 if __name__ == "__main__":
