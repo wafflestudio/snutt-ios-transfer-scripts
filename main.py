@@ -76,7 +76,7 @@ def get_transfer_sub(access_token: str, client_secret: str, apple_sub: str) -> O
         return None
 
 
-def get_new_user_id(access_token: str, client_secret: str, transfer_sub: str) -> dict:
+def get_new_apple_user(access_token: str, client_secret: str, transfer_sub: str) -> Optional[dict]:
     """`tranfser_sub`를 바탕으로 새로운 user_id를 발급받습니다.
     [주의] 이 API는 App Transfer가 완료된 이후부터 사용할 수 있습니다.
 
@@ -103,10 +103,18 @@ def get_new_user_id(access_token: str, client_secret: str, transfer_sub: str) ->
             client_secret=client_secret,
         ),
     )
-    return res.json()
+    try:
+        res.raise_for_status()
+        return res.json()
+    except requests.exceptions.HTTPError:
+        print(res.status_code, res.json())
+        return None
+    except Exception as e:
+        print(e)
+        return None
 
 
-def main():
+def main_for_creating_apple_transfer_sub_of_all_users():
     client_secret = load_jwt_token()
     access_token = generate_access_token(client_secret=client_secret)
 
@@ -134,6 +142,47 @@ def main():
         users.update_one(
             {"_id": user_id},
             {"$set": {"credential.appleTransferSub": transfer_sub}},
+        )
+        count += 1
+
+    print(f"Processed {count} users!")
+
+
+def main():
+    client_secret = load_jwt_token()
+    access_token = generate_access_token(client_secret=client_secret)
+
+    users = client.snutt.users
+    count = 0
+    for i, user in enumerate(users.find({"credential.appleSub": {"$ne": None},
+                                         "credential.appleTransferSub": {"$ne": None}}
+                                        ).sort("regDate", pymongo.ASCENDING)):
+        apple_sub = user["credential"]["appleSub"]
+        apple_transfer_sub = user["credential"]["appleTransferSub"]
+        user_id = user["_id"]
+        reg_date = user["regDate"]
+
+        if i % 100 == 0:
+            print(f"Processed {i} users: {user_id} | {reg_date} | {apple_sub}")
+
+        new_apple_user = get_new_apple_user(
+            access_token=access_token,
+            client_secret=client_secret,
+            transfer_sub=apple_transfer_sub,
+        )
+        new_apple_sub = new_apple_user["sub"]
+        new_apple_email = new_apple_user["email"]
+        if not new_apple_sub or not new_apple_email:
+            print(f"Failed to get transfer sub: {user_id} | {reg_date} | {apple_sub}")
+            continue
+
+        if apple_sub == new_apple_sub:
+            print(f"Already migrated: {user_id} | {reg_date} | {apple_sub} == {new_apple_sub}")
+            continue
+
+        users.update_one(
+            {"_id": user_id},
+            {"$set": {"credential.appleSub": new_apple_sub, "credential.appleEmail": new_apple_email}},
         )
         count += 1
 
